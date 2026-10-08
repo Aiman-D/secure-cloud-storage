@@ -1,0 +1,22 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  tfsec:
+    name: Terraform Security Scan (tfsec)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: ./terraform
+          soft_fail: false # We want the build to fail if there are security issues
