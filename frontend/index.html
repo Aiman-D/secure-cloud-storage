@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Secure Cloud Storage</title>
+  <meta name="description" content="Secure file storage on AWS with least-privilege access, full audit logging and automatic remediation.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.4 12 15 6.9-1.6 12-7.5 12-15V7L16 2z' fill='%2314b8a6'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.4 12 15 6.9-1.6 12-7.5 12-15V7L16 2z"/><path class="brand-check" d="m11 16 3.5 3.5L21 13"/></svg>
+      <span>Secure Cloud Storage</span>
+    </div>
+    <div class="user" id="user-area" hidden>
+      <span class="user-name" id="user-name"></span>
+      <button class="btn btn-ghost" id="logout-btn" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Login -->
+    <section class="login" id="login-view">
+      <div class="login-card card">
+        <p class="eyebrow">Cloud Security Project</p>
+        <h1>Sign in to your vault</h1>
+        <p class="muted">Files are encrypted, private to you, and every action is logged.</p>
+        <form id="login-form" autocomplete="on" novalidate>
+          <label for="username">Username</label>
+          <input id="username" name="username" autocomplete="username" required>
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button class="btn btn-primary" id="login-btn" type="submit">Sign in</button>
+          <p class="form-error" id="login-error" role="alert"></p>
+        </form>
+      </div>
+
+      <ul class="login-points">
+        <li><strong>Least privilege.</strong> You only ever reach your own folder.</li>
+        <li><strong>No keys in the browser.</strong> Uploads and downloads use links that expire in 5 minutes.</li>
+        <li><strong>Self-healing.</strong> If anyone makes the storage public, it is locked again automatically.</li>
+      </ul>
+    </section>
+
+    <!-- App -->
+    <section class="app" id="app-view" hidden>
+      <div class="col-main">
+        <div class="card">
+          <div class="card-head">
+            <h2>Upload</h2>
+            <span class="muted small" id="upload-limit"></span>
+          </div>
+          <label class="dropzone" id="dropzone" for="file-input">
+            <input type="file" id="file-input" multiple>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+            <span><strong>Choose files</strong> or drag them here</span>
+          </label>
+          <ul class="uploads" id="uploads"></ul>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Your files</h2>
+            <button class="btn btn-ghost" id="refresh-files" type="button">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table class="files">
+              <thead><tr><th>Name</th><th class="num">Size</th><th>Uploaded</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody id="files-body"></tbody>
+            </table>
+          </div>
+          <p class="empty muted" id="files-empty" hidden>No files yet. Upload one above.</p>
+        </div>
+      </div>
+
+      <aside class="col-side">
+        <div class="card status-card">
+          <div class="card-head">
+            <h2>Security status</h2>
+            <span class="pill" id="overall">Checking…</span>
+          </div>
+          <ul class="checks" id="checks"></ul>
+
+          <h3>Recent auto-fixes</h3>
+          <ul class="fixes" id="fixes"></ul>
+          <p class="muted small" id="checked-at"></p>
+        </div>
+
+        <div class="card how">
+          <h2>How it is protected</h2>
+          <ol>
+            <li>You sign in with <strong>Cognito</strong>; <strong>API Gateway</strong> checks your token on every request.</li>
+            <li>A <strong>Lambda</strong> with least-privilege <strong>IAM</strong> hands out S3 links that expire in 5 minutes.</li>
+            <li><strong>CloudTrail</strong> records every change; <strong>EventBridge</strong> spots risky ones.</li>
+            <li>A second <strong>Lambda</strong> re-locks the bucket and <strong>SNS</strong> emails an alert.</li>
+          </ol>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span class="muted small">Built on AWS</span>
+    <ul class="services" id="services"></ul>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

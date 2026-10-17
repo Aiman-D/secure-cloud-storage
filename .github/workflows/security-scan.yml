@@ -2,21 +2,41 @@ name: Security Scan
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+
+permissions:
+  contents: read
 
 jobs:
   tfsec:
-    name: Terraform Security Scan (tfsec)
+    name: Terraform security scan (tfsec)
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Run tfsec
         uses: aquasecurity/tfsec-action@v1.0.3
         with:
           working_directory: ./terraform
-          soft_fail: false # We want the build to fail if there are security issues
+          soft_fail: false # fail the build on any unaccepted finding
+
+  lambda-tests:
+    name: Lambda unit tests (pytest + moto)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements.txt
+
+      - name: Run tests
+        run: pytest -q tests

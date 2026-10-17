@@ -1,57 +1,139 @@
-# Enterprise Secure Cloud Storage Architecture 🛡️
+# Secure Cloud Storage on AWS 🛡️
 
-This is a comprehensive, enterprise-grade cloud security engineering portfolio project. It goes beyond basic cloud storage by implementing active threat remediation, continuous integration security scanning, and least-privilege programmable access—all built on AWS using Infrastructure as Code (Terraform).
+A secure file-storage web app on AWS that **protects, monitors and repairs itself**. Users sign in, upload and download files through short-lived links, and see a live security dashboard. If anyone makes the storage public, by mistake or on purpose, an event-driven guardrail locks it again within seconds and emails an alert.
 
-## 🚀 "Impressive" Enterprise Features Implemented
+Everything is built as code with **Terraform** and runs inside the **AWS Free Tier**.
 
-1. **Automated Event-Driven Remediation (AWS Lambda + EventBridge)**
-   - We don't just alert on misconfigurations; we fix them. If an admin or compromised account attempts to make an S3 bucket public (via `PutBucketAcl`, `PutBucketPolicy`, or `PutBucketPublicAccessBlock`), an EventBridge rule instantly captures the CloudTrail event.
-   - This triggers a custom **Python AWS Lambda function** (`remediate.py`) that instantly reverts the change, enforcing `BlockPublicAccess` within seconds.
+## Architecture
 
-2. **Continuous Security Scanning (CI/CD Pipeline)**
-   - Included a GitHub Actions workflow (`.github/workflows/security-scan.yml`) that automatically runs `tfsec` on every push and pull request. 
-   - This ensures no security vulnerabilities (like unencrypted buckets) are merged into the infrastructure codebase.
+```mermaid
+flowchart LR
+    U[User's browser] -->|HTTPS| CF[CloudFront<br/>security headers]
+    CF -->|Origin Access Control| SITE[(S3: website<br/>private)]
+    U -->|sign in| COG[Cognito]
+    U -->|JWT| APIGW[API Gateway<br/>JWT auth + rate limit]
+    APIGW --> API[Lambda: file API<br/>least-privilege IAM]
+    API -->|5-minute presigned links| DATA[(S3: data<br/>encrypted + versioned)]
+    U -->|upload / download via link| DATA
 
-3. **Custom Python Security Client (Boto3)**
-   - Provided `src/secure_client.py` to demonstrate how an application should programmatically interact with this secure infrastructure.
-   - The script demonstrates assuming a least-privilege IAM role via STS, securely uploading files, programmatically verifying Server-Side Encryption (SSE-S3) on objects, and generating time-limited presigned URLs.
+    DATA -. every API call .-> CT[CloudTrail]
+    CT --> EB[EventBridge rule]
+    EB --> REM[Lambda: auto-remediation]
+    REM -->|re-enable Block Public Access| DATA
+    REM --> SNS[SNS email alert]
+    CT --> CWL[CloudWatch Logs]
+    CWL --> ALM[CloudWatch alarms<br/>root login, failed logins]
+    ALM --> SNS
+```
 
-4. **Robust Infrastructure Base (Terraform)**
-   - Centralized CloudTrail logging.
-   - S3 Versioning & Lifecycle Rules (keeping costs in the Free Tier).
-   - strict Bucket Policies enforcing HTTPS (`aws:SecureTransport`).
-   - IAM Access Analyzer enabled for continuous monitoring of resource sharing.
+## AWS services used (14, plus 1 optional)
 
-## Prerequisites
+| Service | What it does here |
+|---|---|
+| **S3** | Encrypted, versioned, private buckets for files, the website and logs |
+| **CloudFront** | Serves the website over HTTPS with strict security headers (CSP, HSTS, no framing) |
+| **Cognito** | User sign-in; no public sign-up, admin-created accounts only |
+| **API Gateway** | HTTP API that checks the user's login token on every request and rate-limits |
+| **Lambda** | Two functions: the file API and the auto-remediation guardrail |
+| **IAM** | Least-privilege roles for every component, plus a read-only security auditor role |
+| **STS** | Temporary credentials when the CLI client assumes the app role |
+| **CloudTrail** | Records every management API call, to S3 and CloudWatch Logs |
+| **EventBridge** | Spots risky S3 changes in CloudTrail and triggers the guardrail |
+| **SNS** | Emails security alerts |
+| **CloudWatch** | Logs, metric filters, alarms and a security dashboard |
+| **X-Ray** | Traces both Lambda functions |
+| **IAM Access Analyzer** | Flags anything shared outside the account |
+| **S3 Storage Lens** | Storage usage dashboard |
+| **GuardDuty** (optional) | Threat detection; off by default because it is a 30-day trial |
 
-- [Terraform](https://developer.hashicorp.com/terraform/downloads) installed locally.
-- An [AWS Account](https://aws.amazon.com/free/) (Architected to use AWS Free Tier services).
-- [AWS CLI](https://aws.amazon.com/cli/) configured with your credentials (`aws configure`).
-- Python 3.x and `boto3` (`pip install boto3`) to run the secure client.
+## Security controls
 
-## How to Deploy & Test
+**Data protection**
+- S3 Block Public Access on every bucket, ACLs disabled
+- Encryption at rest (SSE-S3) and HTTPS-only bucket policies
+- Versioning with a 7-day undo window
+- S3 server access logs for the data and website buckets
 
-### 1. Deploy the Infrastructure
-1. Navigate to the `terraform` directory: `cd terraform`
-2. Initialize Terraform: `terraform init`
-3. Deploy the resources: `terraform apply`
+**Access control**
+- Cognito login with a strong password policy; the API rejects requests without a valid token
+- Each user can only reach their own folder (`users/<their-id>/`), enforced in code and by IAM
+- The browser never holds AWS keys; uploads and downloads use presigned links that expire in 5 minutes
+- File size limits are enforced by S3 itself through the presigned POST policy, not just by the browser
+- File names are sanitised so nobody can escape their folder
+- API rate limiting (10 requests/second, burst 20)
 
-### 2. Test the Automated Remediation
-1. Go into the AWS Console and find the generated Data S3 Bucket.
-2. Attempt to turn off "Block all public access" in the permissions tab.
-3. Wait a few seconds and refresh the page. The Lambda function will have automatically re-enabled "Block all public access"!
+**Detection and response**
+- CloudTrail with log file validation, sent to S3 and CloudWatch Logs
+- Auto-remediation: weakening a bucket's public access settings triggers EventBridge, and a Lambda re-locks the bucket and emails an alert. It ignores its own changes (no loops), failed API calls, and buckets that are already safe.
+- CloudWatch alarms (CIS benchmark style) for root account use, failed console logins and remediation errors
+- The website shows a live security status panel and recent auto-fixes
 
-### 3. Run the Secure Client
-1. Find the ARN of the `app-role` from the terraform outputs.
-2. Run the client script:
-   ```bash
-   python src/secure_client.py <APP_ROLE_ARN> <DATA_BUCKET_NAME> path/to/some_test_file.txt
-   ```
-3. The script will securely assume the role, upload the file, verify encryption, and print a shareable link.
+**Secure development**
+- Every push runs **tfsec** (infrastructure security scan) and **pytest** unit tests in GitHub Actions
+- Every accepted tfsec finding has a written reason in the code (`#tfsec:ignore` comments), usually that the fix costs money outside the free tier
 
-## Clean Up
+## Project structure
 
-To destroy all provisioned infrastructure:
+```
+.
+├── terraform/            # all infrastructure as code
+│   ├── main.tf           # data + logging buckets
+│   ├── website.tf        # site bucket, CloudFront, security headers
+│   ├── auth.tf           # Cognito
+│   ├── api.tf            # API Gateway + file API Lambda
+│   ├── remediation.tf    # EventBridge + remediation Lambda
+│   ├── monitoring.tf     # CloudTrail, alarms, dashboard, Access Analyzer, Storage Lens, GuardDuty
+│   ├── alerts.tf         # SNS
+│   ├── iam.tf            # app role + security auditor role
+│   └── terraform.tfvars.example
+├── lambda/
+│   ├── api/api.py        # file API
+│   └── remediator/remediate.py
+├── frontend/             # the website (HTML, CSS, JS)
+├── src/secure_client.py  # command-line client using STS AssumeRole
+├── tests/                # unit tests with a mocked AWS (moto)
+└── .github/workflows/    # tfsec + tests on every push
+```
+
+## Deploy
+
+**You need:** Terraform, the AWS CLI configured with an IAM admin user (not root), and Python 3.
+
 ```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars   # then edit: your email + a password
+terraform init
+terraform apply
+```
+
+The first deploy takes about 10 minutes, mostly CloudFront. Then:
+
+1. **Confirm the SNS email.** AWS sends a "Subscription Confirmation" email; click the link or you won't get alerts.
+2. Open `website_url` from the Terraform output and sign in with your username and password.
+
+## Demo script
+
+1. **Website:** sign in, upload a file, download it, and show the security status panel (all green).
+2. **Least privilege:** in IAM, show that the API Lambda can only reach `users/*` in the data bucket.
+3. **Attack and auto-fix:** in S3, turn off Block Public Access on the data bucket. Within about a minute the website panel shows a new auto-fix, the bucket is locked again, and an alert email arrives.
+4. **Evidence:** CloudTrail Event history shows who made the change; the CloudWatch dashboard (`dashboard_url` output) shows the remediation and API traffic.
+5. **CLI client:** `python src/secure_client.py <application_role_arn> <data_bucket_name> test.txt`
+6. **Secure pipeline:** the GitHub Actions tab shows tfsec and tests passing.
+
+## Run the tests
+
+```bash
+pip install -r tests/requirements.txt
+pytest -q tests
+```
+
+## Cost
+
+Designed for the AWS Free Tier: no NAT gateways, no KMS customer keys, no WAF, management-event CloudTrail only, and short log retention. GuardDuty is off unless you set `enable_guardduty = true`.
+
+## Clean up
+
+```bash
+cd terraform
 terraform destroy
 ```

@@ -41,3 +41,14 @@ terraform.rc
 __pycache__/
 *.pyc
 .env
+
+# Lambda build output
+terraform/build/
+
+# Local Python environments and caches
+venv/
+.venv/
+.pytest_cache/
+
+# macOS
+.DS_Store

@@ -1,0 +1,9 @@
+# Copy this file to terraform.tfvars and fill in your own values.
+# terraform.tfvars is in .gitignore, so your password never reaches GitHub.
+
+alert_email   = "you@example.com"
+demo_username = "demo"
+demo_password = "Change-Me-2026"
+
+# Turn on only around the demo (30-day free trial)
+enable_guardduty = false

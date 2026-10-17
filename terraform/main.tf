@@ -1,4 +1,8 @@
-# Random string for unique bucket names
+# =============================================================================
+# Storage layer: a private data bucket, plus a logging bucket for CloudTrail
+# and S3 server access logs.
+# =============================================================================
+
 resource "random_string" "suffix" {
   length  = 8
   special = false
@@ -6,14 +10,14 @@ resource "random_string" "suffix" {
 }
 
 # -----------------------------------------------------------------------------
-# CloudTrail Logging Bucket
+# Logging bucket (CloudTrail logs + S3 access logs)
 # -----------------------------------------------------------------------------
+#tfsec:ignore:aws-s3-enable-bucket-logging Access-logging the log bucket into itself would create an endless loop of log files
 resource "aws_s3_bucket" "logging_bucket" {
   bucket        = "${var.project_name}-logs-${random_string.suffix.result}"
-  force_destroy = true # For easy cleanup in this portfolio project
+  force_destroy = true # lets `terraform destroy` clean up a student project
 }
 
-# Block public access for logging bucket
 resource "aws_s3_bucket_public_access_block" "logging_bucket_pab" {
   bucket = aws_s3_bucket.logging_bucket.id
 
@@ -23,7 +27,7 @@ resource "aws_s3_bucket_public_access_block" "logging_bucket_pab" {
   restrict_public_buckets = true
 }
 
-# SSE-S3 encryption for logging bucket
+#tfsec:ignore:aws-s3-encryption-customer-key A customer-managed KMS key costs about $1/month; SSE-S3 keeps this inside the free tier
 resource "aws_s3_bucket_server_side_encryption_configuration" "logging_bucket_sse" {
   bucket = aws_s3_bucket.logging_bucket.id
   rule {
@@ -33,33 +37,62 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "logging_bucket_ss
   }
 }
 
-# Bucket policy to allow CloudTrail to write logs
+resource "aws_s3_bucket_versioning" "logging_bucket_versioning" {
+  bucket = aws_s3_bucket.logging_bucket.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "logging_bucket_lifecycle" {
+  bucket = aws_s3_bucket.logging_bucket.id
+
+  rule {
+    id     = "expire-old-logs"
+    status = "Enabled"
+    filter {}
+
+    expiration {
+      days = 90
+    }
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.logging_bucket_versioning]
+}
+
 resource "aws_s3_bucket_policy" "logging_bucket_policy" {
   bucket = aws_s3_bucket.logging_bucket.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "AWSCloudTrailAclCheck"
-        Effect = "Allow"
-        Principal = {
-          Service = "cloudtrail.amazonaws.com"
-        }
-        Action   = "s3:GetBucketAcl"
-        Resource = aws_s3_bucket.logging_bucket.arn
+        Sid       = "AWSCloudTrailAclCheck"
+        Effect    = "Allow"
+        Principal = { Service = "cloudtrail.amazonaws.com" }
+        Action    = "s3:GetBucketAcl"
+        Resource  = aws_s3_bucket.logging_bucket.arn
       },
       {
-        Sid    = "AWSCloudTrailWrite"
-        Effect = "Allow"
-        Principal = {
-          Service = "cloudtrail.amazonaws.com"
-        }
-        Action   = "s3:PutObject"
-        Resource = "${aws_s3_bucket.logging_bucket.arn}/prefix/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
+        Sid       = "AWSCloudTrailWrite"
+        Effect    = "Allow"
+        Principal = { Service = "cloudtrail.amazonaws.com" }
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.logging_bucket.arn}/cloudtrail/AWSLogs/${local.account_id}/*"
         Condition = {
-          StringEquals = {
-            "s3:x-amz-acl" = "bucket-owner-full-control"
-          }
+          StringEquals = { "s3:x-amz-acl" = "bucket-owner-full-control" }
+        }
+      },
+      {
+        Sid       = "S3ServerAccessLogsWrite"
+        Effect    = "Allow"
+        Principal = { Service = "logging.s3.amazonaws.com" }
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.logging_bucket.arn}/s3-access-logs/*"
+        Condition = {
+          StringEquals = { "aws:SourceAccount" = local.account_id }
         }
       },
       {
@@ -67,29 +100,28 @@ resource "aws_s3_bucket_policy" "logging_bucket_policy" {
         Effect    = "Deny"
         Principal = "*"
         Action    = "s3:*"
-        Resource  = [
+        Resource = [
           aws_s3_bucket.logging_bucket.arn,
           "${aws_s3_bucket.logging_bucket.arn}/*"
         ]
         Condition = {
-          Bool = {
-            "aws:SecureTransport" = "false"
-          }
+          Bool = { "aws:SecureTransport" = "false" }
         }
       }
     ]
   })
+
+  depends_on = [aws_s3_bucket_public_access_block.logging_bucket_pab]
 }
 
 # -----------------------------------------------------------------------------
-# Primary Data Bucket
+# Primary data bucket (the files users upload)
 # -----------------------------------------------------------------------------
 resource "aws_s3_bucket" "data_bucket" {
   bucket        = "${var.project_name}-data-${random_string.suffix.result}"
   force_destroy = true
 }
 
-# Block public access for data bucket
 resource "aws_s3_bucket_public_access_block" "data_bucket_pab" {
   bucket = aws_s3_bucket.data_bucket.id
 
@@ -99,7 +131,7 @@ resource "aws_s3_bucket_public_access_block" "data_bucket_pab" {
   restrict_public_buckets = true
 }
 
-# SSE-S3 encryption for data bucket
+#tfsec:ignore:aws-s3-encryption-customer-key A customer-managed KMS key costs about $1/month; SSE-S3 keeps this inside the free tier
 resource "aws_s3_bucket_server_side_encryption_configuration" "data_bucket_sse" {
   bucket = aws_s3_bucket.data_bucket.id
   rule {
@@ -109,7 +141,6 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "data_bucket_sse" 
   }
 }
 
-# Enable Versioning
 resource "aws_s3_bucket_versioning" "data_bucket_versioning" {
   bucket = aws_s3_bucket.data_bucket.id
   versioning_configuration {
@@ -117,19 +148,47 @@ resource "aws_s3_bucket_versioning" "data_bucket_versioning" {
   }
 }
 
-# Lifecycle rule to expire old versions (keep storage within free tier)
+# Old versions are kept for 7 days (undo window), then deleted to stay in the free tier
 resource "aws_s3_bucket_lifecycle_configuration" "data_bucket_lifecycle" {
   bucket = aws_s3_bucket.data_bucket.id
+
   rule {
     id     = "expire_old_versions"
     status = "Enabled"
+    filter {}
+
     noncurrent_version_expiration {
       noncurrent_days = 7
     }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.data_bucket_versioning]
+}
+
+# Every request to the data bucket is recorded in the logging bucket
+resource "aws_s3_bucket_logging" "data_bucket_logging" {
+  bucket        = aws_s3_bucket.data_bucket.id
+  target_bucket = aws_s3_bucket.logging_bucket.id
+  target_prefix = "s3-access-logs/data/"
+
+  depends_on = [aws_s3_bucket_policy.logging_bucket_policy]
+}
+
+# Browsers may upload directly to S3, but only from our own website
+resource "aws_s3_bucket_cors_configuration" "data_bucket_cors" {
+  bucket = aws_s3_bucket.data_bucket.id
+
+  cors_rule {
+    allowed_methods = ["POST"]
+    allowed_origins = ["https://${aws_cloudfront_distribution.site.domain_name}"]
+    allowed_headers = ["*"]
+    max_age_seconds = 3000
   }
 }
 
-# Enforce HTTPS bucket policy
 resource "aws_s3_bucket_policy" "data_bucket_policy" {
   bucket = aws_s3_bucket.data_bucket.id
   policy = jsonencode({
@@ -140,19 +199,16 @@ resource "aws_s3_bucket_policy" "data_bucket_policy" {
         Effect    = "Deny"
         Principal = "*"
         Action    = "s3:*"
-        Resource  = [
+        Resource = [
           aws_s3_bucket.data_bucket.arn,
           "${aws_s3_bucket.data_bucket.arn}/*"
         ]
         Condition = {
-          Bool = {
-            "aws:SecureTransport" = "false"
-          }
+          Bool = { "aws:SecureTransport" = "false" }
         }
       }
     ]
   })
-}
 
-# Caller identity data source
-data "aws_caller_identity" "current" {}
+  depends_on = [aws_s3_bucket_public_access_block.data_bucket_pab]
+}
