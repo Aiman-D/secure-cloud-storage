@@ -149,9 +149,12 @@
     const body = $("files-body");
     body.replaceChildren();
     $("files-empty").hidden = files.length > 0;
+    const total = files.reduce((sum, f) => sum + f.size, 0);
+    const count = $("files-count");
+    if (count) count.textContent = `${files.length} item${files.length === 1 ? "" : "s"} · ${formatSize(total)} · private to you`;
     for (const file of files) {
-      const download = el("button", { class: "btn btn-ghost", type: "button", text: "Download", onclick: () => downloadFile(file.name) });
-      const remove = el("button", { class: "btn btn-ghost", type: "button", text: "Delete" });
+      const download = el("button", { class: "btn btn-small", type: "button", text: "Download", onclick: () => downloadFile(file.name) });
+      const remove = el("button", { class: "btn btn-small", type: "button", text: "Delete" });
       remove.addEventListener("click", () => armDelete(remove, file.name));
       body.append(el("tr", {}, [
         el("td", { class: "name", title: file.name, text: file.name }),
@@ -323,7 +326,31 @@
     statusTimer = setInterval(loadStatus, STATUS_REFRESH_MS);
   }
 
+  function tickClock() {
+    const clock = $("clock");
+    if (clock) clock.textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+
+  function setupThemeToggle() {
+    const button = $("theme-toggle");
+    if (!button) return;
+    const label = () => {
+      const dark = document.documentElement.getAttribute("data-theme") === "dark";
+      button.textContent = dark ? "Light Mode" : "Dark Mode";
+    };
+    label();
+    button.addEventListener("click", () => {
+      const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("vault.theme", next); } catch { /* storage blocked */ }
+      label();
+    });
+  }
+
   function init() {
+    setupThemeToggle();
+    tickClock();
+    setInterval(tickClock, 15000);
     $("services").replaceChildren(...(CFG.services || []).map((name) => el("li", { text: name })));
     $("upload-limit").textContent = `Max ${CFG.maxUploadMb || 10} MB per file`;
 
