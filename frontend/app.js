@@ -257,6 +257,17 @@
     const zone = $("dropzone");
     const input = $("file-input");
     input.addEventListener("change", () => { uploadFiles(input.files); input.value = ""; });
+    // Open the file picker explicitly: some browsers (Safari) ignore the label click on a hidden input
+    zone.addEventListener("click", (e) => {
+      if (e.target === input) return;
+      e.preventDefault();
+      input.click();
+    });
+    zone.setAttribute("role", "button");
+    zone.tabIndex = 0;
+    zone.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); }
+    });
     ["dragenter", "dragover"].forEach((type) => zone.addEventListener(type, (e) => {
       e.preventDefault();
       zone.classList.add("dragging");
